@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smart-teeth-api"
+version = "0.1.0"
+description = "Smart Teeth API"
+authors = [
+    {name = "Author"}
+]
+dependencies = [
+    "flask>=3.0.0",
+    "flask-cors>=4.0.0",
+    "pymongo>=4.6.0",
+    "pyjwt>=2.8.0",
+    "python-dotenv>=1.0.0",
+    "bcrypt>=4.1.0",
+    "cryptography>=46.0.4"
+]
+requires-python = ">=3.9"
