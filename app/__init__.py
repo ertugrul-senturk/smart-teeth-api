@@ -14,4 +14,63 @@ def create_app():
     app.register_blueprint(auth_bp, url_prefix='/v1/auth')
     app.register_blueprint(sync_bp, url_prefix='/v1/sync')
 
+    def check_mongo():
+        try:
+            db_instance.get_db().command('ping')
+            return True
+        except Exception:
+            return False
+
+    @app.route('/')
+    def index():
+        mongo_ok = check_mongo()
+        mongo_color = '#2ecc71' if mongo_ok else '#e74c3c'
+        mongo_label = 'Storage operates' if mongo_ok else 'Storage unreachable'
+
+        return f'''
+        <html>
+        <head>
+            <title>Smart Teeth API</title>
+            <style>
+                * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                    display: flex; justify-content: center; align-items: center;
+                    height: 100vh; background: linear-gradient(135deg, #e0f7fa, #f0f2f5);
+                }}
+                .card {{
+                    text-align: center; padding: 48px 56px;
+                    background: white; border-radius: 16px;
+                    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+                }}
+                h1 {{ color: #1a1a2e; font-size: 22px; font-weight: 600; margin-bottom: 16px; }}
+                .status-row {{
+                    display: flex; align-items: center; justify-content: center;
+                    gap: 8px; font-size: 15px; color: #444;
+                }}
+                .dot {{
+                    display: inline-block; width: 10px; height: 10px;
+                    border-radius: 50%; margin-right: 4px;
+                    animation: pulse 2s infinite;
+                }}
+                .dot-green {{ background: #2ecc71; box-shadow: 0 0 8px rgba(46,204,113,0.5); }}
+                .dot-red {{ background: #e74c3c; box-shadow: 0 0 8px rgba(231,76,60,0.5); }}
+                @keyframes pulse {{
+                    0%, 100% {{ opacity: 1; }}
+                    50% {{ opacity: 0.4; }}
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h1><span class="dot dot-green"></span>Smart Teeth server is up and running</h1>
+                <div class="status-row">
+                    <span class="dot {"dot-green" if mongo_ok else "dot-red"}"></span>
+                    <span style="color: {mongo_color}; font-weight: 500;">{mongo_label}</span>
+                </div>
+            </div>
+        </body>
+        </html>
+        '''
+
     return app

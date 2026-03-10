@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 
 class DataRecord:
@@ -8,8 +8,8 @@ class DataRecord:
         self.key = key
         self.data = data
         self.deleted = deleted
-        self.created_at = created_at if created_at else datetime.utcnow()
-        self.updated_at = updated_at if updated_at else datetime.utcnow()
+        self.created_at = created_at if created_at else datetime.now(timezone.utc)
+        self.updated_at = updated_at if updated_at else datetime.now(timezone.utc)
 
     def to_dict(self):
         return {

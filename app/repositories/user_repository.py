@@ -1,5 +1,7 @@
 from bson import ObjectId
-from datetime import datetime
+from datetime import datetime, timezone
+import json
+
 from app.config import db_instance
 from app.models import User
 from app.services.security_service import SecurityService
@@ -11,8 +13,8 @@ class UserRepository:
         self._create_indexes()
 
     def _create_indexes(self):
-        self.collection.create_index('email_hash', unique=True)
-        self.collection.create_index('username_hash', unique=True)
+        self.collection.create_index('eh', unique=True)
+        self.collection.create_index('uh', unique=True)
 
     def create(self, user):
         user_dict = user.to_dict()
@@ -29,34 +31,50 @@ class UserRepository:
 
     def find_by_email(self, email):
         email_hash = SecurityService.generate_blind_index(email)
-        user_data = self.collection.find_one({'email_hash': email_hash})
+        user_data = self.collection.find_one({'eh': email_hash})
         return User.from_dict(user_data) if user_data else None
 
     def find_by_username(self, username):
         username_hash = SecurityService.generate_blind_index(username)
-        user_data = self.collection.find_one({'username_hash': username_hash})
+        user_data = self.collection.find_one({'uh': username_hash})
         return User.from_dict(user_data) if user_data else None
 
     def update(self, user_id, update_data):
+        """
+        update_data uses logical field names (name, email, username, password, profile_data).
+        This method encrypts and maps them to the short DB field names.
+        """
         if isinstance(user_id, str):
             user_id = ObjectId(user_id)
 
+        db_update = {}
+
         if 'email' in update_data:
-            update_data['email_hash'] = SecurityService.generate_blind_index(update_data['email'])
-            update_data['email'] = SecurityService.encrypt(update_data['email'])
+            db_update['eh'] = SecurityService.generate_blind_index(update_data['email'])
+            db_update['e'] = SecurityService.encrypt(update_data['email'])
 
         if 'username' in update_data:
-            update_data['username_hash'] = SecurityService.generate_blind_index(update_data['username'])
-            update_data['username'] = SecurityService.encrypt(update_data['username'])
+            db_update['uh'] = SecurityService.generate_blind_index(update_data['username'])
+            db_update['u'] = SecurityService.encrypt(update_data['username'])
 
         if 'name' in update_data:
-            update_data['name'] = SecurityService.encrypt(update_data['name'])
+            db_update['n'] = SecurityService.encrypt(update_data['name'])
 
-        update_data['updated_at'] = datetime.utcnow()
+        if 'password' in update_data:
+            db_update['p'] = update_data['password']
+
+        if 'profile_data' in update_data:
+            pd = update_data['profile_data']
+            if pd:
+                db_update['pd'] = SecurityService.encrypt(json.dumps(pd))
+            else:
+                db_update['pd'] = None
+
+        db_update['ua'] = datetime.now(timezone.utc)
 
         result = self.collection.update_one(
             {'_id': user_id},
-            {'$set': update_data}
+            {'$set': db_update}
         )
         return result.modified_count > 0
 
@@ -68,9 +86,8 @@ class UserRepository:
 
     def exists_by_email(self, email):
         email_hash = SecurityService.generate_blind_index(email)
-        return self.collection.count_documents({'email_hash': email_hash}) > 0
+        return self.collection.count_documents({'eh': email_hash}) > 0
 
     def exists_by_username(self, username):
-
         username_hash = SecurityService.generate_blind_index(username)
-        return self.collection.count_documents({'username_hash': username_hash}) > 0
+        return self.collection.count_documents({'uh': username_hash}) > 0

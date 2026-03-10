@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 
 class ScanRecord:
@@ -14,8 +14,8 @@ class ScanRecord:
         self.main_image = main_image
         self.tooth_images = tooth_images or []
         self.deleted = deleted
-        self.created_at = created_at if created_at else datetime.utcnow()
-        self.updated_at = updated_at if updated_at else datetime.utcnow()
+        self.created_at = created_at if created_at else datetime.now(timezone.utc)
+        self.updated_at = updated_at if updated_at else datetime.now(timezone.utc)
 
     def to_dict(self):
         return {

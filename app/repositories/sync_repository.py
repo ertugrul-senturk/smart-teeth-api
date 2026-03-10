@@ -1,5 +1,6 @@
 from bson import ObjectId
-from datetime import datetime
+from bson.errors import InvalidId
+from datetime import datetime, timezone
 import base64
 
 
@@ -14,7 +15,7 @@ class SyncRepository:
         for oid in object_ids:
             try:
                 valid_object_ids.append(ObjectId(oid))
-            except:
+            except (InvalidId, TypeError, KeyError):
                 valid_object_ids.append(oid)
 
         query = {
@@ -36,7 +37,7 @@ class SyncRepository:
         for oid in existing_ids_on_client:
             try:
                 client_object_ids.append(ObjectId(oid))
-            except:
+            except (InvalidId, TypeError, KeyError):
                 client_object_ids.append(oid)
 
         query = {
@@ -70,12 +71,12 @@ class SyncRepository:
             if '_id' in doc and doc['_id']:
                 try:
                     doc['_id'] = ObjectId(doc['_id'])
-                except:
+                except (InvalidId, TypeError, KeyError):
                     pass
 
             # Add timestamps
-            doc['createdAt'] = doc.get('createdAt', datetime.utcnow())
-            doc['updatedAt'] = datetime.utcnow()
+            doc['createdAt'] = doc.get('createdAt', datetime.now(timezone.utc))
+            doc['updatedAt'] = datetime.now(timezone.utc)
             doc['isDeleted'] = False
 
             try:
@@ -99,7 +100,7 @@ class SyncRepository:
         collection = self.db[collection_key]
 
         document['userId'] = user_id
-        document['updatedAt'] = datetime.utcnow()
+        document['updatedAt'] = datetime.now(timezone.utc)
         document['isDeleted'] = False
 
         doc_id = document.pop('_id', None)
@@ -107,17 +108,17 @@ class SyncRepository:
         if doc_id:
             try:
                 obj_id = ObjectId(doc_id)
-            except:
+            except (InvalidId, TypeError, KeyError):
                 obj_id = doc_id
 
             collection.update_one(
                 {'_id': obj_id, 'userId': user_id},
-                {'$set': document, '$setOnInsert': {'createdAt': datetime.utcnow()}},
+                {'$set': document, '$setOnInsert': {'createdAt': datetime.now(timezone.utc)}},
                 upsert=True
             )
             return str(obj_id)
         else:
-            document['createdAt'] = datetime.utcnow()
+            document['createdAt'] = datetime.now(timezone.utc)
             result = collection.insert_one(document)
             return str(result.inserted_id)
 
@@ -128,7 +129,7 @@ class SyncRepository:
         for oid in object_ids:
             try:
                 valid_object_ids.append(ObjectId(oid))
-            except:
+            except (InvalidId, TypeError, KeyError):
                 valid_object_ids.append(oid)
 
         result = collection.update_many(
@@ -139,8 +140,8 @@ class SyncRepository:
             {
                 '$set': {
                     'isDeleted': True,
-                    'deletedAt': datetime.utcnow(),
-                    'updatedAt': datetime.utcnow()
+                    'deletedAt': datetime.now(timezone.utc),
+                    'updatedAt': datetime.now(timezone.utc)
                 }
             }
         )
@@ -162,7 +163,7 @@ class ImageRepository:
             'userId': user_id,
             'base64Data': image_data.get('base64', ''),
             'mimeType': image_data.get('mimeType', 'image/jpeg'),
-            'createdAt': datetime.utcnow()
+            'createdAt': datetime.now(timezone.utc)
         }
         result = self.collection.insert_one(doc)
         return str(result.inserted_id)
@@ -181,7 +182,7 @@ class ImageRepository:
                 'base64Data': base64_data,
                 'mimeType': img.get('mimeType', 'image/jpeg'),
                 'size': len(img['data']),
-                'createdAt': datetime.utcnow()
+                'createdAt': datetime.now(timezone.utc)
             }
 
             result = self.collection.insert_one(doc)
@@ -197,7 +198,7 @@ class ImageRepository:
         for img_id in image_ids:
             try:
                 object_ids.append(ObjectId(img_id))
-            except:
+            except (InvalidId, TypeError, KeyError):
                 object_ids.append(img_id)
 
         query = {
