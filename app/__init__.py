@@ -43,6 +43,10 @@ def create_app():
 
     @app.route('/')
     def index():
+        # Landing page is opt-out: on a public host it leaks storage status.
+        if not Config.SHOW_STATUS_PAGE:
+            return jsonify({'message': 'Not found'}), 404
+
         mongo_ok = check_mongo()
         mongo_color = '#2ecc71' if mongo_ok else '#e74c3c'
         mongo_label = 'Storage operates' if mongo_ok else 'Storage unreachable'

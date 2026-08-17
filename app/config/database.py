@@ -77,6 +77,12 @@ class Config:
     # Comma-separated origin allowlist; '*' (default) keeps current behavior.
     CORS_ORIGINS = [o.strip() for o in (os.getenv('CORS_ORIGINS') or '*').split(',') if o.strip()]
 
+    # ── Status page ──────────────────────────────────────────────────────
+    # The landing page at '/' ("Smart Teeth server is up and running" + a live
+    # storage-reachability dot). Set False to hide it (returns 404) — it does a
+    # Mongo ping and reveals storage status, so disable it on a public host.
+    SHOW_STATUS_PAGE = (os.getenv('SHOW_STATUS_PAGE') or 'True') == 'True'
+
     # ── Rate limiting (auth endpoints) ───────────────────────────────────
     RATELIMIT_ENABLED = (os.getenv('RATELIMIT_ENABLED') or 'True') == 'True'
     RATELIMIT_LOGIN = os.getenv('RATELIMIT_LOGIN') or '10 per minute'
