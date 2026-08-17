@@ -24,3 +24,8 @@ requires-python = ">=3.9"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0"]
+
+# Only `app` is the installable package — without this, setuptools' auto-
+# discovery aborts when it sees other top-level dirs (logs/, scripts/, tests/).
+[tool.setuptools.packages.find]
+include = ["app*"]
