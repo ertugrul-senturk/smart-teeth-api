@@ -8,7 +8,8 @@ from app.services.security_service import SecurityService
 
 class User:
     def __init__(self, username, name, email, password, _id=None, created_at=None, updated_at=None,
-                 age=None, gender=None, ethnicity=None, has_insurance=None, last_doctor_visit=None):
+                 age=None, gender=None, ethnicity=None, has_insurance=None, last_doctor_visit=None,
+                 status='active', suspended_at=None):
         self._id = _id if _id else ObjectId()
         self.username = username
         self.name = name
@@ -19,6 +20,8 @@ class User:
         self.ethnicity = ethnicity
         self.has_insurance = has_insurance
         self.last_doctor_visit = last_doctor_visit
+        self.status = status or 'active'        # 'active' | 'suspended'
+        self.suspended_at = suspended_at
         self.created_at = created_at if created_at else datetime.now(timezone.utc)
         self.updated_at = updated_at if updated_at else datetime.now(timezone.utc)
 
@@ -68,6 +71,9 @@ class User:
             'uh': SecurityService.generate_blind_index(self.username),
             'eh': SecurityService.generate_blind_index(self.email),
 
+            'st': self.status,
+            'sa': self.suspended_at,
+
             'ca': self.created_at,
             'ua': self.updated_at,
         }
@@ -106,6 +112,8 @@ class User:
             ethnicity=parsed.get('ethnicity'),
             has_insurance=parsed.get('has_insurance'),
             last_doctor_visit=parsed.get('last_doctor_visit'),
+            status=data.get('st', 'active'),
+            suspended_at=data.get('sa'),
             created_at=data.get('ca'),
             updated_at=data.get('ua'),
         )
@@ -121,6 +129,8 @@ class User:
             'ethnicity': self.ethnicity,
             'has_insurance': self.has_insurance,
             'last_doctor_visit': self.last_doctor_visit,
+            'status': self.status,
+            'suspended_at': self.suspended_at.isoformat() if self.suspended_at else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }

@@ -11,11 +11,13 @@ class SecurityService:
     @classmethod
     def _get_cipher(cls):
         if cls._cipher is None:
-            # Derive a 32-byte URL-safe base64 key from your SECRET_KEY
+            # Derive a 32-byte URL-safe base64 key from SECRET_KEY. The salt
+            # comes from ENCRYPTION_SALT (defaults to the historical value so
+            # existing rows keep decrypting — set a real one on fresh DBs).
             kdf = PBKDF2HMAC(
                 algorithm=hashes.SHA256(),
                 length=32,
-                salt=b'static_salt_change_me', # In prod, use a fixed salt per app or dynamic per user
+                salt=Config.ENCRYPTION_SALT.encode(),
                 iterations=100000,
             )
             key = base64.urlsafe_b64encode(kdf.derive(Config.SECRET_KEY.encode()))
@@ -40,4 +42,4 @@ class SecurityService:
         so you can run queries like find_by_email.
         """
         if not text: return None
-        return hashlib.sha256((text + Config.SECRET_KEY).encode()).hexdigest()
+        return hashlib.sha256((text + Config.BLIND_INDEX_PEPPER).encode()).hexdigest()

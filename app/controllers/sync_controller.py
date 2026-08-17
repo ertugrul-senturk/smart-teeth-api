@@ -1,21 +1,16 @@
 from flask import Blueprint, request, jsonify, current_app, g
 
-from app.services.sync_service import SyncService, ImageService
+from app.services.sync_service import SyncService, ImageTooLargeError
 from app.utils.middleware import token_required
 
-sync_bp = Blueprint('sync', __name__, url_prefix='/sync')
+# Mounted under /v1/sync by create_app.
+sync_bp = Blueprint('sync', __name__)
 
 
 def get_sync_service():
     if 'sync_service' not in g:
         g.sync_service = SyncService(current_app.config['DB'])
     return g.sync_service
-
-
-def get_image_service():
-    if 'image_service' not in g:
-        g.image_service = ImageService(current_app.config['DB'])
-    return g.image_service
 
 
 @sync_bp.route('/sync1', methods=['POST'])
@@ -34,11 +29,9 @@ def sync_step_1(current_user):
 
         return jsonify(result), 200
 
-    except Exception as e:
-        return jsonify({
-            'message': 'Sync step 1 failed',
-            'error': str(e)
-        }), 500
+    except Exception:
+        current_app.logger.exception('Sync step 1 failed')
+        return jsonify({'message': 'Sync step 1 failed'}), 500
 
 
 @sync_bp.route('/sync2', methods=['POST'])
@@ -57,11 +50,9 @@ def sync_step_2(current_user):
 
         return jsonify(result), 200
 
-    except Exception as e:
-        return jsonify({
-            'message': 'Sync step 2 failed',
-            'error': str(e)
-        }), 500
+    except Exception:
+        current_app.logger.exception('Sync step 2 failed')
+        return jsonify({'message': 'Sync step 2 failed'}), 500
 
 
 @sync_bp.route('/images/upload', methods=['POST'])
@@ -81,11 +72,11 @@ def upload_image(current_user):
 
         return jsonify(result), 200
 
-    except Exception as e:
-        return jsonify({
-            'message': 'Image upload failed',
-            'error': str(e)
-        }), 500
+    except ImageTooLargeError as e:
+        return jsonify({'message': str(e)}), 413
+    except Exception:
+        current_app.logger.exception('Image upload failed')
+        return jsonify({'message': 'Image upload failed'}), 500
 
 
 @sync_bp.route('/images/download/<image_id>', methods=['GET'])
@@ -105,11 +96,9 @@ def download_image(current_user, image_id):
 
         return jsonify({'image': images[0]}), 200
 
-    except Exception as e:
-        return jsonify({
-            'message': 'Image download failed',
-            'error': str(e)
-        }), 500
+    except Exception:
+        current_app.logger.exception('Image download failed')
+        return jsonify({'message': 'Image download failed'}), 500
 
 
 @sync_bp.route('/delete', methods=['DELETE'])
@@ -117,10 +106,14 @@ def download_image(current_user, image_id):
 def mark_as_delete(current_user):
     try:
         data = request.get_json()
-        collection_key = data.get('collection_key'),
-        ids = data.get('ids')
         if not data:
             return jsonify({'message': 'No data provided'}), 400
+
+        collection_key = data.get('collection_key')
+        ids = data.get('ids')
+
+        if not collection_key or not isinstance(ids, list) or not ids:
+            return jsonify({'message': 'collection_key and ids are required'}), 400
 
         user_id = str(current_user._id)
 
@@ -129,8 +122,9 @@ def mark_as_delete(current_user):
 
         return jsonify(result), 200
 
-    except Exception as e:
-        return jsonify({
-            'message': 'Items deleted',
-            'error': str(e)
-        }), 500
+    except ValueError as e:
+        return jsonify({'message': str(e)}), 400
+
+    except Exception:
+        current_app.logger.exception('Delete failed')
+        return jsonify({'message': 'Delete failed'}), 500

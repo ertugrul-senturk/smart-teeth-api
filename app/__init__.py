@@ -1,18 +1,38 @@
-from flask import Flask
+from flask import Flask, jsonify
 from flask_cors import CORS
-from app.config import Config, db_instance
-from app.controllers import auth_bp, sync_bp
+from app.config import Config, db_instance, ensure_indexes
+from app.controllers import auth_bp, sync_bp, desktop_bp
+from app.utils.rate_limit import limiter
 
 
 def create_app():
     app = Flask(__name__)
     app.config['SECRET_KEY'] = Config.SECRET_KEY
     app.config['DB'] = db_instance.get_db()
+    app.config['MAX_CONTENT_LENGTH'] = Config.MAX_CONTENT_LENGTH_MB * 1024 * 1024
+    ensure_indexes(app.config['DB'])
 
-    CORS(app)
+    CORS(app, origins=Config.CORS_ORIGINS)
+
+    limiter.init_app(app)
+    limiter.enabled = Config.RATELIMIT_ENABLED
 
     app.register_blueprint(auth_bp, url_prefix='/v1/auth')
     app.register_blueprint(sync_bp, url_prefix='/v1/sync')
+    app.register_blueprint(desktop_bp, url_prefix='/v1/desktop')
+
+    # Uniform JSON errors — no HTML error pages, no internals in responses.
+    @app.errorhandler(413)
+    def payload_too_large(_e):
+        return jsonify({'message': f'Request exceeds the {Config.MAX_CONTENT_LENGTH_MB}MB limit'}), 413
+
+    @app.errorhandler(429)
+    def too_many_requests(_e):
+        return jsonify({'message': 'Too many requests — try again later'}), 429
+
+    @app.errorhandler(500)
+    def internal_error(_e):
+        return jsonify({'message': 'An error occurred'}), 500
 
     def check_mongo():
         try:
