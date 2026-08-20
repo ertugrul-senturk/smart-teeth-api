@@ -39,6 +39,14 @@ def _parse_date_arg(name):
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
+@desktop_bp.route('/ping', methods=['GET'])
+@api_key_required
+def ping():
+    """Cheap authenticated probe so the desktop app can validate its API key.
+    No DB access, no audit row — safe to call on every app start."""
+    return jsonify({'ok': True, 'keyName': g.api_key_name}), 200
+
+
 @desktop_bp.route('/sync', methods=['POST'])
 @api_key_required
 def sync_entries():
@@ -159,6 +167,61 @@ def fetch_patient_images(user_id):
     except Exception:
         current_app.logger.exception('Patient image fetch failed')
         return jsonify({'message': 'Patient image fetch failed'}), 500
+
+
+@desktop_bp.route('/patients/<user_id>', methods=['DELETE'])
+@api_key_required
+def delete_patient(user_id):
+    """Permanently erase a patient's synced data (records, images, import
+    links). With deleteAccount=true the mobile account itself is removed too,
+    including any archived copy. Irreversible; desktop app only."""
+    try:
+        data = request.get_json(silent=True) or {}
+        delete_account = bool(data.get('deleteAccount'))
+
+        result = get_desktop_service().delete_patient(user_id, delete_account)
+        audit('patient.delete', _actor(),
+              patientId=user_id, deleteAccount=delete_account,
+              removed=result['removed'])
+        return jsonify(result), 200
+
+    except LookupError as e:
+        return jsonify({'message': str(e)}), 404
+    except Exception:
+        current_app.logger.exception('Patient delete failed')
+        return jsonify({'message': 'Patient delete failed'}), 500
+
+
+@desktop_bp.route('/patients/<user_id>/records', methods=['DELETE'])
+@api_key_required
+def delete_patient_records(user_id):
+    """Permanently erase selected records of a patient plus the images they
+    reference. Irreversible; desktop app only."""
+    try:
+        data = request.get_json(silent=True) or {}
+        collection_key = data.get('collection')
+        record_ids = data.get('recordIds')
+        if not collection_key:
+            return jsonify({'message': 'collection is required'}), 400
+        if (not isinstance(record_ids, list) or not record_ids
+                or not all(isinstance(r, str) and r for r in record_ids)):
+            return jsonify({'message': 'recordIds must be a non-empty list of ids'}), 400
+
+        result = get_desktop_service().delete_patient_records(
+            user_id, collection_key, record_ids
+        )
+        audit('patient.records.delete', _actor(),
+              patientId=user_id, collection=collection_key,
+              requested=len(record_ids), removed=result['removed'])
+        return jsonify(result), 200
+
+    except ValueError as e:
+        return jsonify({'message': str(e)}), 400
+    except LookupError as e:
+        return jsonify({'message': str(e)}), 404
+    except Exception:
+        current_app.logger.exception('Patient records delete failed')
+        return jsonify({'message': 'Patient records delete failed'}), 500
 
 
 @desktop_bp.route('/import-link', methods=['POST'])

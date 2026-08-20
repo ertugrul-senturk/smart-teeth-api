@@ -11,6 +11,6 @@ source venv/bin/activate
 pip install .
 
 echo "Restarting app..."
-./run.sh restart
+"$APP_DIR/scripts/restart.sh"
 
 echo "Done at $(date)"

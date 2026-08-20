@@ -85,6 +85,22 @@ class DesktopSyncService:
         images = self.image_repo.get_images_by_ids(user_id, image_ids or [])
         return {'images': images}
 
+    # ── Permanent deletion (dentist-initiated, desktop app only) ──────────
+
+    def delete_patient_records(self, user_id, collection_key, record_ids):
+        if collection_key not in ALLOWED_SYNC_COLLECTIONS:
+            raise ValueError('Unknown collection')
+        if not self.patient_repo.get_patient(user_id):
+            raise LookupError('Patient not found')
+        removed = self.patient_repo.delete_records(user_id, collection_key, record_ids)
+        return {'removed': removed}
+
+    def delete_patient(self, user_id, delete_account=False):
+        if not self.patient_repo.get_patient(user_id):
+            raise LookupError('Patient not found')
+        removed, account_deleted = self.patient_repo.purge_patient(user_id, delete_account)
+        return {'removed': removed, 'accountDeleted': account_deleted}
+
     def register_import(self, source_collection, source_user_id, source_record_id,
                         device_id, desktop_entry_id, key_name=None):
         if source_collection not in ALLOWED_SYNC_COLLECTIONS:

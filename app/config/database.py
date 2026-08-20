@@ -150,6 +150,11 @@ def ensure_indexes(db):
         IMAGES_COLLECTION,
         IMPORT_LINKS_COLLECTION,
         AUDIT_LOG_COLLECTION,
+        DATASET_ITEMS_COLLECTION,
+        DATASETS_COLLECTION,
+        DATASET_MASKS_COLLECTION,
+        DATASET_EVENTS_COLLECTION,
+        DATASET_EXPORTS_COLLECTION,
     )
 
     # Users: unique blind-index lookups. Created here once at startup —
@@ -203,3 +208,21 @@ def ensure_indexes(db):
             )
         except Exception as e:
             print(f"WARNING: could not create index on '{name}': {e}")
+
+    # Shared dataset workspace: one item per image per dataset (revives reuse
+    # the tombstoned row, so the unique index has no partial filter), and
+    # updatedAt feeds the /changes delta poll.
+    try:
+        db[DATASET_ITEMS_COLLECTION].create_index(
+            [('datasetId', 1), ('assetHash', 1)],
+            unique=True,
+            name='uniq_dataset_asset',
+        )
+        db[DATASET_ITEMS_COLLECTION].create_index('updatedAt')
+        db[DATASET_ITEMS_COLLECTION].create_index('sourceRef.sourceRecordId')
+        db[DATASETS_COLLECTION].create_index('updatedAt')
+        db[DATASET_MASKS_COLLECTION].create_index('itemId')
+        db[DATASET_EVENTS_COLLECTION].create_index([('itemId', 1), ('createdAt', 1)])
+        db[DATASET_EXPORTS_COLLECTION].create_index([('datasetId', 1), ('version', -1)])
+    except Exception as e:
+        print(f"WARNING: could not create dataset indexes: {e}")
