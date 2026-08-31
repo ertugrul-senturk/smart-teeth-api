@@ -90,7 +90,12 @@ def _body():
 @api_key_required
 @_handles('Dataset list')
 def list_datasets():
-    return jsonify({'datasets': get_dataset_service().list_datasets()}), 200
+    # No `page` → legacy full list; with it → searchable page + total.
+    raw_page = request.args.get('page')
+    page = max(int(raw_page), 1) if raw_page is not None else None
+    page_size = min(max(int(request.args.get('pageSize', '50')), 1), 200) if page else None
+    search = request.args.get('search') or None
+    return jsonify(get_dataset_service().list_datasets(search, page, page_size)), 200
 
 
 @datasets_bp.route('', methods=['POST'])

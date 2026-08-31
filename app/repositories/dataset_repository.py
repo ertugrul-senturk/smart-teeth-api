@@ -114,11 +114,35 @@ class DatasetRepository:
 
     def list_datasets(self):
         docs = list(self.datasets.find({'isDeleted': False}).sort('createdAt', -1))
+        self._attach_counts(docs)
+        return docs
+
+    def search_datasets(self, search=None, page=1, page_size=50):
+        """One page of datasets matching `search` (case-insensitive substring
+        of name or description), newest first, plus the total match count.
+        Status counts are aggregated only for the returned page."""
+        import re
+
+        query = {'isDeleted': False}
+        if search and search.strip():
+            pattern = re.compile(re.escape(search.strip()), re.IGNORECASE)
+            query['$or'] = [{'name': pattern}, {'description': pattern}]
+
+        total = self.datasets.count_documents(query)
+        docs = list(
+            self.datasets.find(query)
+            .sort('createdAt', -1)
+            .skip(max(page - 1, 0) * page_size)
+            .limit(page_size)
+        )
+        self._attach_counts(docs)
+        return docs, total
+
+    def _attach_counts(self, docs):
         counts = self._status_counts([d['_id'] for d in docs])
         for doc in docs:
             doc['counts'] = counts.get(doc['_id'], {})
             doc['imageCount'] = sum(doc['counts'].values())
-        return docs
 
     def _status_counts(self, dataset_ids):
         if not dataset_ids:

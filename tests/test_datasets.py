@@ -24,6 +24,38 @@ def labeler_headers(desktop_headers):
     return {**desktop_headers, 'X-Labeler-Name': 'Dr. Aylin'}
 
 
+class TestDatasetSearch:
+    def test_search_and_pagination(self, client, labeler_headers):
+        for name in ['Searchable One', 'Searchable Two', 'Searchable Three']:
+            response = client.post('/v1/desktop/datasets', headers=labeler_headers,
+                                   json={'name': name, 'description': 'find-me',
+                                         'tasks': ['cavity']})
+            assert response.status_code == 201
+
+        response = client.get('/v1/desktop/datasets?search=searchable&page=1&pageSize=2',
+                              headers=labeler_headers)
+        assert response.status_code == 200
+        body = response.get_json()
+        assert body['total'] == 3
+        assert len(body['datasets']) == 2
+
+        response = client.get('/v1/desktop/datasets?search=searchable&page=2&pageSize=2',
+                              headers=labeler_headers)
+        assert len(response.get_json()['datasets']) == 1
+
+        # Description matches too; regex metacharacters are escaped.
+        response = client.get('/v1/desktop/datasets?search=find-me&page=1',
+                              headers=labeler_headers)
+        assert response.get_json()['total'] == 3
+        response = client.get('/v1/desktop/datasets?search=.*&page=1',
+                              headers=labeler_headers)
+        assert response.get_json()['total'] == 0
+
+        # Without `page` the legacy full-list shape is unchanged.
+        legacy = client.get('/v1/desktop/datasets', headers=labeler_headers).get_json()
+        assert 'total' not in legacy and isinstance(legacy['datasets'], list)
+
+
 @pytest.fixture()
 def dataset(client, labeler_headers):
     response = client.post('/v1/desktop/datasets', headers=labeler_headers, json={

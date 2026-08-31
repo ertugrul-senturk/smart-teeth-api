@@ -3,6 +3,8 @@ import io
 import json
 import zipfile
 
+import pytest
+
 from tests.conftest import API_KEY
 
 
@@ -89,6 +91,76 @@ class TestPatientBrowsing:
         assert me['has_insurance'] is True
         assert me['recordCounts']['tooth_scan_history'] == 1
         assert me['recordCounts']['tell_us_about_you_data'] == 1
+
+    def _register(self, client, name):
+        from tests.conftest import unique
+        response = client.post('/v1/auth/register', json={
+            'username': unique('pg'), 'name': name,
+            'email': f'{unique("pg")}@example.com', 'password': 'hunter22',
+        })
+        assert response.status_code == 201, response.get_json()
+        return response.get_json()['id']
+
+    def test_patients_search_and_pagination(self, client, desktop_headers):
+        for name in ['Paging Alice', 'Paging Bob', 'Paging Carol']:
+            self._register(client, name)
+
+        response = client.get('/v1/desktop/patients?search=paging&page=1&pageSize=2',
+                              headers=desktop_headers)
+        assert response.status_code == 200
+        body = response.get_json()
+        assert body['total'] == 3
+        assert body['page'] == 1 and body['pageSize'] == 2
+        assert [p['name'] for p in body['patients']] == ['Paging Alice', 'Paging Bob']
+
+        response = client.get('/v1/desktop/patients?search=paging&page=2&pageSize=2',
+                              headers=desktop_headers)
+        assert [p['name'] for p in response.get_json()['patients']] == ['Paging Carol']
+
+        # Search also matches emails; unmatched queries return an empty page.
+        response = client.get('/v1/desktop/patients?search=zzz-no-match&page=1',
+                              headers=desktop_headers)
+        assert response.get_json() == {
+            'patients': [], 'total': 0, 'page': 1, 'pageSize': 50,
+        }
+
+        # Without `page` the legacy full-list shape is unchanged.
+        legacy = client.get('/v1/desktop/patients', headers=desktop_headers).get_json()
+        assert 'total' not in legacy and isinstance(legacy['patients'], list)
+
+    def test_records_pagination_and_trend(self, client, user, desktop_headers):
+        scans = [{
+            'id': f'pg-scan-{i}', 'timestamp': 1700000000000 + i,
+            'toothImages': [
+                {'index': 0, 'cavityLabel': 'healthy', 'cavityConfidence': 0.9,
+                 'plaqueLevel': 'mild', 'plaqueCoverage': 0.2},
+                {'index': 1, 'cavityLabel': 'level_2', 'cavityConfidence': 0.8,
+                 'plaqueLevel': 'healthy', 'plaqueCoverage': 0.0},
+            ],
+        } for i in range(3)]
+        client.post('/v1/sync/sync2', headers=user['headers'],
+                    json={'tooth_scan_history': scans})
+
+        base = f"/v1/desktop/patients/{user['id']}/records?collection=tooth_scan_history"
+        response = client.get(f'{base}&page=1&pageSize=2&includeTrend=1',
+                              headers=desktop_headers)
+        assert response.status_code == 200
+        body = response.get_json()
+        assert body['total'] == 3
+        assert len(body['records']) == 2
+
+        # Trend covers the whole history and derives summaries from the teeth
+        # when the record never synced one.
+        assert len(body['trend']) == 3
+        row = body['trend'][0]
+        assert row['summary'] == {'total': 2, 'healthy': 1, 'level1': 0, 'level2': 1}
+        assert row['plaqueSummary']['total'] == 2
+        assert row['plaqueSummary']['avgCoverage'] == pytest.approx(10.0)
+
+        response = client.get(f'{base}&page=2&pageSize=2', headers=desktop_headers)
+        body = response.get_json()
+        assert len(body['records']) == 1
+        assert 'trend' not in body
 
     def test_records_endpoint_with_import_status(self, client, user, desktop_headers):
         self._seed_scan(client, user)

@@ -194,8 +194,17 @@ class DatasetService:
         doc['imageCount'] = 0
         return _shape_dataset(doc)
 
-    def list_datasets(self):
-        return [_shape_dataset(doc) for doc in self.repo.list_datasets()]
+    def list_datasets(self, search=None, page=None, page_size=None):
+        """Legacy full list without `page`; a searchable page + total with it."""
+        if page is None:
+            return {'datasets': [_shape_dataset(doc) for doc in self.repo.list_datasets()]}
+        docs, total = self.repo.search_datasets(search, page, page_size)
+        return {
+            'datasets': [_shape_dataset(doc) for doc in docs],
+            'total': total,
+            'page': page,
+            'pageSize': page_size,
+        }
 
     def update_dataset(self, dataset_id, base_version, data, actor):
         _require_id(dataset_id, 'dataset id')

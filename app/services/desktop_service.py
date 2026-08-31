@@ -46,16 +46,35 @@ class DesktopSyncService:
 
     # ── Patient browsing (dentist reads of mobile data) ──────────────────
 
-    def list_patients(self):
-        return {'patients': self.patient_repo.list_patients()}
+    def list_patients(self, search=None, page=None, page_size=None):
+        """Legacy full list without `page`; a name-sorted, searchable page
+        (plus the total) with it — the shape the desktop's paginated patient
+        browser reads."""
+        if page is None:
+            return {'patients': self.patient_repo.list_patients()}
+        patients, total = self.patient_repo.search_patients(search, page, page_size)
+        return {
+            'patients': patients,
+            'total': total,
+            'page': page,
+            'pageSize': page_size,
+        }
 
-    def patient_records(self, user_id, collection_key, date_from=None, date_to=None):
+    def patient_records(self, user_id, collection_key, date_from=None, date_to=None,
+                        page=None, page_size=None, include_trend=False):
+        """Legacy full list without `page`; with it, one newest-first page plus
+        the filtered total — and, with include_trend, lightweight whole-history
+        metric rows for the progress sparklines."""
         if collection_key not in ALLOWED_SYNC_COLLECTIONS:
             raise ValueError('Unknown collection')
         if not self.patient_repo.get_patient(user_id):
             raise LookupError('Patient not found')
 
-        records = self.patient_repo.get_records(user_id, collection_key, date_from, date_to)
+        skip = (page - 1) * page_size if page else None
+        records = self.patient_repo.get_records(
+            user_id, collection_key, date_from, date_to,
+            skip=skip, limit=page_size if page else None,
+        )
         links = self.link_repo.links_for_user(user_id, collection_key)
 
         for record in records:
@@ -74,7 +93,20 @@ class DesktopSyncService:
                 'lastEditedAt': link['lastEditedAt'].isoformat() if link.get('lastEditedAt') else None,
             } for link in record_links]
 
-        return {'records': records}
+        if page is None:
+            return {'records': records}
+
+        result = {
+            'records': records,
+            'total': self.patient_repo.count_records(
+                user_id, collection_key, date_from, date_to,
+            ),
+            'page': page,
+            'pageSize': page_size,
+        }
+        if include_trend:
+            result['trend'] = self.patient_repo.get_trend(user_id, collection_key)
+        return result
 
     def fetch_patient_images(self, user_id, image_ids):
         """Batch image fetch, scoped to one patient — the repo query is

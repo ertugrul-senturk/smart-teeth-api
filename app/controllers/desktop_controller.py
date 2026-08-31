@@ -190,13 +190,33 @@ def upload_images():
 
 # ── Patient browsing: dentist access to mobile app data ─────────────────────
 
+def _parse_page_args():
+    """Optional pagination args: (page, pageSize) — (None, None) when the
+    caller didn't paginate (legacy full-list clients). Clamped so a bad
+    client can't ask the server to build an absurd page."""
+    raw_page = request.args.get('page')
+    if raw_page is None:
+        return None, None
+    try:
+        page = max(int(raw_page), 1)
+        page_size = min(max(int(request.args.get('pageSize', '50')), 1), 200)
+    except ValueError:
+        raise ValueError('page and pageSize must be integers')
+    return page, page_size
+
+
 @desktop_bp.route('/patients', methods=['GET'])
 @api_key_required
 def list_patients():
     try:
-        result = get_desktop_service().list_patients()
-        audit('patients.list', _actor(), count=len(result['patients']))
+        page, page_size = _parse_page_args()
+        search = request.args.get('search') or None
+        result = get_desktop_service().list_patients(search, page, page_size)
+        audit('patients.list', _actor(), count=len(result['patients']),
+              search=bool(search), page=page)
         return jsonify(result), 200
+    except ValueError as e:
+        return jsonify({'message': str(e)}), 400
     except Exception:
         current_app.logger.exception('Patient list failed')
         return jsonify({'message': 'Patient list failed'}), 500
@@ -212,9 +232,12 @@ def patient_records(user_id):
 
         date_from = _parse_date_arg('from')
         date_to = _parse_date_arg('to')
+        page, page_size = _parse_page_args()
+        include_trend = request.args.get('includeTrend') in ('1', 'true')
 
         result = get_desktop_service().patient_records(
-            user_id, collection_key, date_from, date_to
+            user_id, collection_key, date_from, date_to,
+            page=page, page_size=page_size, include_trend=include_trend,
         )
         audit('patient.records.read', _actor(),
               patientId=user_id, collection=collection_key,

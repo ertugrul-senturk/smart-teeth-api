@@ -44,38 +44,90 @@ class PatientRepository:
         self.db = db
         self.users = db['users']
 
-    def _record_counts_by_user(self):
-        """{userId: {collection: count}} across all sync collections."""
+    def _record_counts_by_user(self, user_ids=None):
+        """{userId: {collection: count}} across all sync collections.
+        With user_ids, counts only those users (one page instead of the
+        whole fleet)."""
+        match = dict(_NOT_DELETED)
+        if user_ids is not None:
+            if not user_ids:
+                return {}
+            match = {'$and': [{'userId': {'$in': list(user_ids)}}, _NOT_DELETED]}
         counts = {}
         for name in ALLOWED_SYNC_COLLECTIONS:
             pipeline = [
-                {'$match': _NOT_DELETED},
+                {'$match': match},
                 {'$group': {'_id': '$userId', 'n': {'$sum': 1}}},
             ]
             for row in self.db[name].aggregate(pipeline):
                 counts.setdefault(str(row['_id']), {})[name] = row['n']
         return counts
 
+    def _patient_dict(self, user, counts):
+        user_id = str(user._id)
+        return {
+            'id': user_id,
+            'name': user.name,
+            'email': user.email,
+            'age': user.age,
+            'gender': user.gender,
+            'ethnicity': user.ethnicity,
+            'has_insurance': user.has_insurance,
+            'last_doctor_visit': user.last_doctor_visit,
+            'status': user.status,
+            'created_at': user.created_at.isoformat() if user.created_at else None,
+            'recordCounts': counts.get(user_id, {}),
+        }
+
     def list_patients(self):
         counts = self._record_counts_by_user()
-        patients = []
-        for doc in self.users.find():
-            user = User.from_dict(doc)
-            user_id = str(user._id)
-            patients.append({
-                'id': user_id,
-                'name': user.name,
-                'email': user.email,
-                'age': user.age,
-                'gender': user.gender,
-                'ethnicity': user.ethnicity,
-                'has_insurance': user.has_insurance,
-                'last_doctor_visit': user.last_doctor_visit,
-                'status': user.status,
-                'created_at': user.created_at.isoformat() if user.created_at else None,
-                'recordCounts': counts.get(user_id, {}),
-            })
-        return patients
+        return [
+            self._patient_dict(User.from_dict(doc), counts)
+            for doc in self.users.find()
+        ]
+
+    def search_patients(self, search=None, page=1, page_size=50):
+        """One name-sorted page of patients matching `search` (case-insensitive
+        substring of name or email), plus the total match count.
+
+        Names and emails are encrypted at rest (only exact-match blind indexes
+        exist), so matching decrypts just those two fields per user — the full
+        profile blob and the record counts are only resolved for the returned
+        page. Returns (patients, total).
+        """
+        from app.services.security_service import SecurityService
+
+        def _decrypt(value):
+            if not value:
+                return ''
+            try:
+                return SecurityService.decrypt(value) or ''
+            except Exception:
+                return ''
+
+        query = (search or '').strip().lower()
+        rows = []
+        for doc in self.users.find({}, {'n': 1, 'e': 1}):
+            name = _decrypt(doc.get('n'))
+            email = _decrypt(doc.get('e'))
+            if query and query not in name.lower() and query not in email.lower():
+                continue
+            rows.append((doc['_id'], name))
+        rows.sort(key=lambda r: r[1].lower())
+
+        total = len(rows)
+        start = max(page - 1, 0) * page_size
+        page_ids = [oid for oid, _ in rows[start:start + page_size]]
+        if not page_ids:
+            return [], total
+
+        docs = {d['_id']: d for d in self.users.find({'_id': {'$in': page_ids}})}
+        counts = self._record_counts_by_user([str(oid) for oid in page_ids])
+        patients = [
+            self._patient_dict(User.from_dict(docs[oid]), counts)
+            for oid in page_ids if oid in docs
+        ]
+        return patients, total
 
     def get_patient(self, user_id):
         from bson import ObjectId
@@ -87,10 +139,9 @@ class PatientRepository:
         doc = self.users.find_one({'_id': oid})
         return User.from_dict(doc) if doc else None
 
-    def get_records(self, user_id, collection_key, date_from=None, date_to=None):
-        """Non-deleted records of one patient, optionally createdAt-bounded."""
+    @staticmethod
+    def _records_query(user_id, date_from=None, date_to=None):
         query = {'userId': user_id, **_NOT_DELETED}
-
         created = {}
         if date_from:
             created['$gte'] = date_from
@@ -98,9 +149,94 @@ class PatientRepository:
             created['$lte'] = date_to
         if created:
             query['createdAt'] = created
+        return query
 
-        docs = self.db[collection_key].find(query).sort('createdAt', -1)
-        return [_jsonify_safe(doc) for doc in docs]
+    def get_records(self, user_id, collection_key, date_from=None, date_to=None,
+                    skip=None, limit=None):
+        """Non-deleted records of one patient, optionally createdAt-bounded
+        and skip/limit-windowed (newest first)."""
+        query = self._records_query(user_id, date_from, date_to)
+        cursor = self.db[collection_key].find(query).sort('createdAt', -1)
+        if skip:
+            cursor = cursor.skip(skip)
+        if limit:
+            cursor = cursor.limit(limit)
+        return [_jsonify_safe(doc) for doc in cursor]
+
+    def count_records(self, user_id, collection_key, date_from=None, date_to=None):
+        query = self._records_query(user_id, date_from, date_to)
+        return self.db[collection_key].count_documents(query)
+
+    # Trend rows deliberately skip the heavyweight per-tooth arrays — only the
+    # fields the desktop's progress sparklines read. toothImages is projected
+    # to the three label fields so summaries can be derived for old records
+    # that never synced one.
+    _TREND_PROJECTION = {
+        'id': 1, 'timestamp': 1, 'createdAt': 1, 'detectionCount': 1,
+        'summary': 1, 'plaqueSummary': 1, 'gingivitisSummary': 1,
+        'toothImages.cavityLabel': 1,
+        'toothImages.plaqueLevel': 1,
+        'toothImages.plaqueCoverage': 1,
+    }
+
+    @staticmethod
+    def _derived_cavity_summary(doc):
+        summary = doc.get('summary')
+        if isinstance(summary, dict) and isinstance(summary.get('total'), (int, float)):
+            return summary
+        teeth = [t for t in doc.get('toothImages') or [] if isinstance(t, dict)]
+        if not teeth:
+            return None
+        labels = [t.get('cavityLabel') for t in teeth]
+        return {
+            'total': len(teeth),
+            'healthy': labels.count('healthy'),
+            'level1': labels.count('level_1'),
+            'level2': labels.count('level_2'),
+        }
+
+    @staticmethod
+    def _derived_plaque_summary(doc):
+        summary = doc.get('plaqueSummary')
+        if isinstance(summary, dict) and isinstance(summary.get('total'), (int, float)):
+            return summary
+        teeth = [
+            t for t in doc.get('toothImages') or []
+            if isinstance(t, dict) and t.get('plaqueLevel') is not None
+        ]
+        if not teeth:
+            return None
+        covered = [t['plaqueCoverage'] for t in teeth
+                   if isinstance(t.get('plaqueCoverage'), (int, float))]
+        levels = [t.get('plaqueLevel') for t in teeth]
+        return {
+            'total': len(teeth),
+            'healthy': levels.count('healthy'),
+            'mild': levels.count('mild'),
+            'moderate': levels.count('moderate'),
+            'severe': levels.count('severe'),
+            'avgCoverage': (sum(covered) * 100 / len(covered)) if covered else 0,
+        }
+
+    def get_trend(self, user_id, collection_key):
+        """Lightweight metric rows for EVERY record of the patient (the
+        progress trend always spans the whole history, regardless of the
+        date filter or page shown)."""
+        docs = self.db[collection_key].find(
+            self._records_query(user_id), self._TREND_PROJECTION,
+        ).sort('createdAt', 1)
+        rows = []
+        for doc in docs:
+            row = {
+                'id': str(doc.get('id') or doc.get('_id')),
+                'timestamp': doc.get('timestamp'),
+                'detectionCount': doc.get('detectionCount'),
+                'summary': self._derived_cavity_summary(doc),
+                'plaqueSummary': self._derived_plaque_summary(doc),
+                'gingivitisSummary': doc.get('gingivitisSummary'),
+            }
+            rows.append(_jsonify_safe(row))
+        return rows
 
     # ── Permanent deletion (desktop-initiated) ────────────────────────────
 
