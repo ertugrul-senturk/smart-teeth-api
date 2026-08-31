@@ -26,6 +26,22 @@ IMPORT_LINKS_COLLECTION = 'import_links'
 # Immutable trail of desktop-side reads/imports/exports of patient data.
 AUDIT_LOG_COLLECTION = 'audit_log'
 
+# Registration keys (licensing): keys the master user creates from the desktop
+# admin tab. The key itself is stored as a blind-index hash (lookup) plus an
+# encrypted copy (reveal); see app/repositories/registration_key_repository.py.
+REGISTRATION_KEYS_COLLECTION = 'registration_keys'
+
+# One row per (key, device) install: who registered with the key (labeler
+# name), when it was first/last seen, and how many sessions (app starts).
+KEY_INSTALLS_COLLECTION = 'key_installs'
+
+# OTA app updates: releases published by the master user from the desktop
+# admin tab. Installer binaries are stored in our own chunk store (Mongo's
+# 16MB document cap → 8MB chunks) — see app/repositories/update_repository.py.
+APP_UPDATES_COLLECTION = 'app_updates'
+UPDATE_ASSETS_COLLECTION = 'update_assets'
+UPDATE_ASSET_CHUNKS_COLLECTION = 'update_asset_chunks'
+
 # Shared dataset workspace (server-authoritative, synchronized across every
 # desktop installation). Items/datasets are versioned + tombstoned; images
 # live content-addressed by sha256, masks in per-item docs — see

@@ -194,6 +194,15 @@ def delete_account(current_user):
         return jsonify({'message': 'An error occurred'}), 500
 
 
+@auth_bp.route('/me', methods=['GET'])
+@token_required
+def me(current_user):
+    # Lightweight existence probe for clients: token_required already answers
+    # 401 when the account is gone (e.g. deleted from the desktop app), so
+    # reaching this handler means the account is still alive.
+    return jsonify({'id': str(current_user._id), 'username': current_user.username}), 200
+
+
 @auth_bp.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'healthy'}), 200

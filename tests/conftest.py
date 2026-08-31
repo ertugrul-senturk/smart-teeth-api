@@ -11,13 +11,35 @@ import uuid
 os.environ['DATABASE_NAME'] = 'smart_teeth_test'
 os.environ['RATELIMIT_ENABLED'] = 'False'
 os.environ['MAX_IMAGE_MB'] = '1'          # small cap so oversize tests are cheap
-os.environ['DESKTOP_API_KEYS'] = 'testkey:test-api-key-123'
+os.environ['MASTER_REGISTRATION_KEY'] = 'AAAAA-BBBBB-CCCCC-DDDDD-EEEEE'
 os.environ.setdefault('SECRET_KEY', 'test-secret-key-0123456789abcdef-0123456789abcdef')
 os.environ.setdefault('MONGODB_URI', 'mongodb://localhost:27017')
 
 import pytest  # noqa: E402
 
 API_KEY = 'test-api-key-123'
+MASTER_KEY = 'AAAAA-BBBBB-CCCCC-DDDDD-EEEEE'
+
+
+def _seed_desktop_key(flask_app):
+    """Desktop endpoints only accept managed registration keys (or the master
+    key) — seed one with the known API_KEY plaintext so fixtures can use it."""
+    from datetime import datetime, timedelta, timezone
+    from app.repositories.registration_key_repository import RegistrationKeyRepository
+    from app.services.security_service import SecurityService
+
+    now = datetime.now(timezone.utc)
+    RegistrationKeyRepository(flask_app.config['DB']).keys.insert_one({
+        'name': 'testkey',
+        'keyHash': SecurityService.generate_blind_index(API_KEY),
+        'keyEnc': SecurityService.encrypt(API_KEY),
+        'keyHint': API_KEY.rsplit('-', 1)[-1],
+        'status': 'active',
+        'startsAt': now - timedelta(days=1),
+        'expiresAt': now + timedelta(days=365),
+        'createdAt': now,
+        'expiredAt': None,
+    })
 
 
 @pytest.fixture(scope='session')
@@ -30,6 +52,7 @@ def app():
     from app import create_app
     flask_app = create_app()
     flask_app.config['TESTING'] = True
+    _seed_desktop_key(flask_app)
 
     yield flask_app
 
@@ -81,3 +104,8 @@ def user(client):
 @pytest.fixture()
 def desktop_headers():
     return {'X-API-Key': API_KEY, 'X-Device-Id': 'test-device-1'}
+
+
+@pytest.fixture()
+def master_headers():
+    return {'X-Master-Key': MASTER_KEY}

@@ -21,33 +21,6 @@ def _validate_required():
         )
 
 
-def _parse_desktop_keys():
-    """Desktop API keys, as {name: key}.
-
-    DESKTOP_API_KEYS="clinic-a:key1,clinic-b:key2" gives each key holder a name
-    (used in the audit log) and lets a single leaked key be revoked without
-    rotating everyone. The legacy single DESKTOP_API_KEY still works and shows
-    up under the name 'default'.
-    """
-    keys = {}
-    raw = os.getenv('DESKTOP_API_KEYS') or ''
-    for pair in raw.split(','):
-        pair = pair.strip()
-        if not pair:
-            continue
-        if ':' in pair:
-            name, key = pair.split(':', 1)
-        else:
-            name, key = f'key{len(keys) + 1}', pair
-        if name.strip() and key.strip():
-            keys[name.strip()] = key.strip()
-
-    single = os.getenv('DESKTOP_API_KEY')
-    if single and single.strip():
-        keys.setdefault('default', single.strip())
-    return keys
-
-
 _validate_required()
 
 
@@ -102,9 +75,13 @@ class Config:
     # link; for a web flow it would be an https URL.
     PASSWORD_RESET_URL = os.getenv('PASSWORD_RESET_URL') or 'smart-teeth://reset-password'
 
-    # Desktop app keys as {name: key} — see _parse_desktop_keys. Empty dict
-    # means desktop sync is disabled (endpoints return 503).
-    DESKTOP_API_KEYS = _parse_desktop_keys()
+    # ── Registration keys (licensing) ────────────────────────────────────
+    # The master registration key unlocks /v1/admin/keys (create / list /
+    # expire / delete registration keys from the desktop admin tab). Keep it
+    # in the same XXXXX-XXXXX-XXXXX-XXXXX-XXXXX format as generated keys.
+    # Unset means the admin surface is disabled (endpoints return 503).
+    # The master key is admin-only — it is NOT accepted as a desktop API key.
+    MASTER_REGISTRATION_KEY = (os.getenv('MASTER_REGISTRATION_KEY') or '').strip() or None
 
 class Database:
     _instance = None
@@ -155,6 +132,10 @@ def ensure_indexes(db):
         DATASET_MASKS_COLLECTION,
         DATASET_EVENTS_COLLECTION,
         DATASET_EXPORTS_COLLECTION,
+        REGISTRATION_KEYS_COLLECTION,
+        KEY_INSTALLS_COLLECTION,
+        APP_UPDATES_COLLECTION,
+        UPDATE_ASSET_CHUNKS_COLLECTION,
     )
 
     # Users: unique blind-index lookups. Created here once at startup —
@@ -186,6 +167,30 @@ def ensure_indexes(db):
         db[AUDIT_LOG_COLLECTION].create_index([('ts', -1)])
     except Exception as e:
         print(f"WARNING: could not create index on '{AUDIT_LOG_COLLECTION}': {e}")
+
+    # Registration keys: auth does a constant-time lookup by key hash; installs
+    # are upserted per (key, device) on every desktop ping.
+    try:
+        db[REGISTRATION_KEYS_COLLECTION].create_index('keyHash', unique=True)
+        db[KEY_INSTALLS_COLLECTION].create_index(
+            [('keyRef', 1), ('deviceId', 1)],
+            unique=True,
+            name='uniq_keyRef_deviceId',
+        )
+    except Exception as e:
+        print(f"WARNING: could not create registration key indexes: {e}")
+
+    # OTA updates: installer bytes are read back chunk-by-chunk in order; the
+    # update check scans active releases (tiny collection, createdAt for lists).
+    try:
+        db[UPDATE_ASSET_CHUNKS_COLLECTION].create_index(
+            [('assetId', 1), ('seq', 1)],
+            unique=True,
+            name='uniq_assetId_seq',
+        )
+        db[APP_UPDATES_COLLECTION].create_index([('createdAt', -1)])
+    except Exception as e:
+        print(f"WARNING: could not create app update indexes: {e}")
 
     for name in ALLOWED_SYNC_COLLECTIONS:
         try:

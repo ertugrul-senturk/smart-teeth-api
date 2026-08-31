@@ -2,13 +2,14 @@ import os
 import tempfile
 from datetime import datetime, timezone
 
-from flask import Blueprint, request, jsonify, current_app, g, send_file
+from flask import Blueprint, request, jsonify, current_app, g, send_file, Response
 
 from app.services.desktop_service import DesktopSyncService
 from app.services.export_service import ExportService
 from app.services.sync_service import ImageTooLargeError
 from app.utils.middleware import api_key_required
 from app.utils.audit import audit
+from app.utils.download_token import make_download_token, verify_download_token
 
 desktop_bp = Blueprint('desktop', __name__)
 
@@ -42,9 +43,91 @@ def _parse_date_arg(name):
 @desktop_bp.route('/ping', methods=['GET'])
 @api_key_required
 def ping():
-    """Cheap authenticated probe so the desktop app can validate its API key.
-    No DB access, no audit row — safe to call on every app start."""
+    """Authenticated probe the desktop app calls on registration and on every
+    app start. Doubles as the session counter behind the admin tab: each ping
+    upserts the (key, device) install row with the caller's labeler name.
+    Recording must never break the probe itself."""
+    device_id = request.headers.get('X-Device-Id')
+    # Master-key sessions aren't recorded — the install ledger tracks the
+    # managed registration keys the admin hands out, not the admin's own use.
+    if device_id and getattr(g, 'registration_key', None) is not None:
+        try:
+            from urllib.parse import unquote
+            from app.repositories.registration_key_repository import RegistrationKeyRepository
+
+            labeler = unquote(request.headers.get('X-Labeler-Name') or '').strip()
+            # The register-with-code flow marks its probe so key installations
+            # are countable separately from routine app-start sessions.
+            is_registration = request.headers.get('X-Registration') == '1'
+            app_version = (request.headers.get('X-App-Version') or '').strip()
+            repo = RegistrationKeyRepository(current_app.config['DB'])
+            key_ref = RegistrationKeyRepository.key_ref(g.registration_key)
+            repo.record_session(key_ref, g.api_key_name, device_id, labeler or None,
+                                registration=is_registration,
+                                app_version=app_version or None)
+        except Exception:
+            current_app.logger.exception('Failed to record key session')
     return jsonify({'ok': True, 'keyName': g.api_key_name}), 200
+
+
+# ── OTA updates ──────────────────────────────────────────────────────────────
+
+@desktop_bp.route('/updates/<target>/<arch>/<current_version>', methods=['GET'])
+@api_key_required
+def check_update(target, arch, current_version):
+    """Tauri updater endpoint: 204 when the device is current, otherwise the
+    dynamic-server JSON contract (version / pub_date / url / signature /
+    notes). The download URL carries a short-lived signed token instead of
+    relying on auth headers — see app/utils/download_token.py."""
+    from app.repositories.update_repository import UpdateRepository
+
+    platform = f'{target}-{arch}'
+    repo = UpdateRepository(current_app.config['DB'])
+    release = repo.latest_for(platform, current_version)
+    if release is None:
+        return '', 204
+
+    entry = release['platforms'][platform]
+    expires, token = make_download_token(entry['assetId'])
+    pub_date = release.get('pubDate')
+    if pub_date is not None and pub_date.tzinfo is None:
+        pub_date = pub_date.replace(tzinfo=timezone.utc)
+    return jsonify({
+        'version': release['version'],
+        'pub_date': pub_date.isoformat().replace('+00:00', 'Z') if pub_date else None,
+        'url': (f"{request.url_root.rstrip('/')}/v1/desktop/updates/download/"
+                f"{entry['assetId']}?e={expires}&t={token}"),
+        'signature': entry['signature'],
+        'notes': release.get('notes') or '',
+    }), 200
+
+
+@desktop_bp.route('/updates/download/<asset_id>', methods=['GET'])
+def download_update(asset_id):
+    """Streamed installer download, authenticated by the signed token issued
+    by check_update (no API key header — the updater's download request is
+    not guaranteed to carry custom headers)."""
+    from app.repositories.update_repository import UpdateRepository
+
+    if not verify_download_token(asset_id, request.args.get('e'), request.args.get('t')):
+        return jsonify({'message': 'Invalid or expired download link'}), 403
+
+    repo = UpdateRepository(current_app.config['DB'])
+    asset = repo.get_asset(asset_id)
+    if asset is None or not asset.get('complete'):
+        return jsonify({'message': 'Update file not found'}), 404
+
+    repo.count_download(asset_id)
+    audit('desktop.update_downloaded', 'desktop:updater',
+          assetId=asset_id, filename=asset['filename'])
+    return Response(
+        repo.iter_chunks(asset['_id']),
+        mimetype='application/octet-stream',
+        headers={
+            'Content-Length': str(asset['size']),
+            'Content-Disposition': f"attachment; filename=\"{asset['filename']}\"",
+        },
+    )
 
 
 @desktop_bp.route('/sync', methods=['POST'])
