@@ -8,6 +8,8 @@ ALLOWED_SYNC_COLLECTIONS = frozenset({
     'plan_baby',
     'tooth_scan_history',
     'tell_us_about_you_data',
+    'routines',
+    'routine_logs',
 })
 
 # Desktop app data lives in its own collections, keyed by deviceId instead of
